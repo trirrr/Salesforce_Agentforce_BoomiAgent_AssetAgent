@@ -1,4 +1,4 @@
-# Aprimo SalesForce Account Lookup — Agentforce Tool
+# Aprimo SF Account Lookup — Agentforce Tool
 
 > **Built by Rob Rojas, Technical Engagement Manager & Solutions Architect at Aprimo**
 > *Salesforce Agentforce · Boomi iPaaS · Salesforce CRM · Enterprise AI Integration*
