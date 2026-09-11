@@ -1,0 +1,190 @@
+{
+  "toolName": "Aprimo SF Account Lookup",
+  "version": "1.0.0",
+  "description": "Enables Agentforce agents to autonomously query Salesforce account data during conversations for personalized, context-aware responses.",
+  "category": "CRM_Integration",
+  "endpoints": {
+    "production": {
+      "url": "https://aprimo-prod.boomi.cloud/ws/simple/executeAprimo_SF_AccountLookup",
+      "method": "POST",
+      "timeout": 4000,
+      "rateLimit": "Inherits Salesforce governor limits"
+    }
+  },
+  "authentication": {
+    "type": "BasicAuth",
+    "credentialName": "Salesforce-aprimo-master@aprimo-UXVOIK.B9T0OD",
+    "token": "54e52eee-bb8c-4a19-8568-0ac5055e36bb",
+    "note": "Credentials are pre-configured in Boomi; do not include in Agentforce config"
+  },
+  "requestSchema": {
+    "contentType": "application/json",
+    "required": ["accountName"],
+    "properties": {
+      "accountName": {
+        "type": "string",
+        "description": "Company name to search for in Salesforce",
+        "example": "Smart Health Systems"
+      },
+      "industry": {
+        "type": "string",
+        "description": "Filter by industry (optional, uses LIKE matching)",
+        "example": "Healthcare"
+      },
+      "type": {
+        "type": "string",
+        "description": "Filter by account type (optional)",
+        "enum": ["Prospect", "Customer", "Channel Partner / Reseller", "Installation Partner", "Technology Partner", "Other"]
+      },
+      "billingCountry": {
+        "type": "string",
+        "description": "Filter by billing country (optional)",
+        "example": "France"
+      }
+    }
+  },
+  "responseSchema": {
+    "contentType": "application/json",
+    "type": "object",
+    "properties": {
+      "accounts": {
+        "type": "array",
+        "description": "Array of matching Salesforce Account records",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "Unique Salesforce Account ID"
+            },
+            "name": {
+              "type": "string",
+              "description": "Account name"
+            },
+            "industry": {
+              "type": "string",
+              "description": "Account industry"
+            },
+            "type": {
+              "type": "string",
+              "description": "Account type (Prospect, Customer, etc.)"
+            },
+            "website": {
+              "type": "string",
+              "description": "Account website URL"
+            },
+            "annualRevenue": {
+              "type": "number",
+              "description": "Annual revenue in USD"
+            },
+            "numberOfEmployees": {
+              "type": "integer",
+              "description": "Number of employees"
+            },
+            "rating": {
+              "type": "string",
+              "enum": ["Hot", "Warm", "Cold"],
+              "description": "Account rating"
+            },
+            "billingCountry": {
+              "type": "string",
+              "description": "Billing country"
+            },
+            "billingState": {
+              "type": "string",
+              "description": "Billing state/province"
+            },
+            "lastActivityDate": {
+              "type": "string",
+              "format": "date",
+              "description": "Date of last account activity"
+            },
+            "lastModifiedDate": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Last modification timestamp"
+            },
+            "customFields": {
+              "type": "object",
+              "description": "Organization-specific custom fields",
+              "properties": {
+                "sdoSalesRegion": {
+                  "type": "string",
+                  "description": "Sales region"
+                },
+                "tier": {
+                  "type": "string",
+                  "description": "Account tier"
+                },
+                "opportunityWinRate": {
+                  "type": "number",
+                  "description": "Win rate percentage"
+                },
+                "daysSinceActivity": {
+                  "type": "integer",
+                  "description": "Days since last activity"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "useCases": [
+    {
+      "title": "Personalize Agent Response",
+      "description": "Reference company size, industry, rating in real-time conversation"
+    },
+    {
+      "title": "Make Informed Decisions",
+      "description": "Prioritize high-value accounts (Hot rating, high revenue) for faster response"
+    },
+    {
+      "title": "Tailor Messaging",
+      "description": "Adjust tone and offerings based on industry, type, or partnership status"
+    },
+    {
+      "title": "Provide Context",
+      "description": "Reference account history, ownership, or activity metrics during conversation"
+    },
+    {
+      "title": "Route Intelligently",
+      "description": "Direct accounts to specialized teams based on tier, region, or opportunity pipeline"
+    },
+    {
+      "title": "Inform Strategy",
+      "description": "Leverage win rates or closed opportunity value to suggest next steps"
+    }
+  ],
+  "performance": {
+    "latency": "3-4 seconds",
+    "latencyBreakdown": {
+      "boomiProcessing": "100-200ms",
+      "salesforceQuery": "800-2000ms",
+      "dataTransformation": "100-150ms",
+      "networkRoundTrip": "1500-1700ms"
+    },
+    "successRate": "99.5% (inherits Salesforce availability)"
+  },
+  "implementation": {
+    "step1": "Copy this tool definition to Agentforce tool configuration",
+    "step2": "Register endpoint URL and authentication method",
+    "step3": "Map response fields to Agentforce context variables",
+    "step4": "Test with sample company names",
+    "step5": "Deploy to agent groups",
+    "step6": "Monitor execution and response quality"
+  },
+  "errorHandling": {
+    "404": "Account not found - returns empty response",
+    "401": "Authentication failed - verify credentials",
+    "500": "Salesforce query error - check SOQL syntax and field availability",
+    "timeout": "Query exceeded 4-second timeout - try with more specific filters"
+  },
+  "notes": {
+    "dataPrivacy": "Queries real Salesforce production data; subject to org data governance policies",
+    "caching": "No caching; each call hits Salesforce directly",
+    "rateLimit": "Subject to Salesforce API governor limits (100,000 API calls/24hrs standard)",
+    "fieldAvailability": "30+ fields available; custom fields depend on org configuration"
+  }
+}
