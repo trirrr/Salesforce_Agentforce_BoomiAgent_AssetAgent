@@ -29,26 +29,6 @@ When a Salesforce AI agent (Agentforce) hears a customer mention their company, 
 
 ---
 
-## What Gets Built Here
-
-This repository contains a **production-ready integration** that connects three enterprise systems:
-
-```
-Customer Message
-      ↓
-Salesforce Agentforce (AI Agent)
-      ↓  [invokes this tool]
-Boomi iPaaS (middleware layer)
-      ↓  [authenticated SOQL query]
-Salesforce CRM (account data)
-      ↓  [structured JSON response]
-Agentforce (uses context to respond)
-```
-
-The middleware layer (Boomi) handles all the hard parts: authentication, query building, filtering, and returning clean structured data the AI can actually use.
-
----
-
 ## Example: What This Looks Like in Action
 
 **Customer says:**
@@ -70,40 +50,76 @@ The customer gets a personalized, informed response. The sales team gets a bette
 
 ## Architecture
 
-### The 5-Shape Boomi Process
+### End-to-End Flow
 
+```mermaid
+flowchart TD
+    A([Customer Message\n'I'm from Smart Health Systems']) --> B
+
+    subgraph SF ["☁️ Salesforce Agentforce"]
+        B[Atlas Reasoning Engine\nroutes intent to subagent]
+        B --> C[Salesforce Account Integration\nsubagent]
+        C --> D[Invoke: Aprimo SF Account Lookup\nagent action]
+    end
+
+    D -->|POST accountName| E
+
+    subgraph BOOMI ["⚙️ Boomi iPaaS — Aprimo_SF_AccountLookup Process"]
+        E[WSS Listener\nReceives agent POST request]
+        E --> F[Groovy Parser\nExtracts fields, builds SOQL WHERE clause\nExecutionUtil.setDynamicProcessProperty]
+        F --> G[Salesforce Query\nOAuth-authenticated SOQL execution\nAccount object — 30+ fields]
+        G --> H[Data Mapper\nTransforms XML response to JSON\nHandles nulls gracefully]
+        H --> I[Response Handler\nReturns structured JSON to agent]
+    end
+
+    G -->|SOQL query| J
+
+    subgraph CRM ["🗄️ Salesforce CRM"]
+        J[(Account Records)]
+    end
+
+    J -->|Account data| G
+    I -->|JSON account context| C
+    C --> K[Agent personalizes response\nusing industry, rating, tier, revenue...]
+    K --> L([Personalized AI Response\nto Customer])
+
+    style SF fill:#0070d2,color:#fff,stroke:#005fb2
+    style BOOMI fill:#1a7f5a,color:#fff,stroke:#155f44
+    style CRM fill:#6B4FBB,color:#fff,stroke:#4e3a8a
 ```
-[1] WSS Listener
-    Receives the POST request from Agentforce with accountName (and optional filters)
 
-[2] Groovy Parser
-    Extracts field values from the JSON body
-    Builds a dynamic SOQL WHERE clause with wildcards for fuzzy matching
-    Uses ExecutionUtil.setDynamicProcessProperty() — critical (see Gotchas)
+### Agentforce Subagent Architecture
 
-[3] Salesforce Query
-    OAuth-authenticated connection to Salesforce
-    Executes the SOQL against the Account object
-    Returns up to 30+ fields per account record
+This tool lives within a three-subagent system. Each subagent owns exactly one action, with mutually exclusive classification descriptions so Agentforce's Atlas reasoning engine routes without ambiguity:
 
-[4] Data Mapper
-    Transforms Salesforce field names into clean JSON keys
-    Handles null fields gracefully
+```mermaid
+flowchart LR
+    ATLAS[Atlas Reasoning Engine\nClassifies user intent]
 
-[5] Response Handler
-    Returns structured JSON to the calling Agentforce agent
-    Agent receives data and incorporates it into its next response
+    ATLAS -->|account / company / customer lookup| SA1
+    ATLAS -->|find assets / show content / DAM| SA2
+    ATLAS -->|match content to industry / campaign| SA3
+
+    subgraph SUBAGENTS ["Agentforce Subagents"]
+        SA1[Salesforce Account Integration\n→ This tool]
+        SA2[Automated Asset Surfacing\n→ GetAprimoDAMCollections]
+        SA3[Content Relevance Matching\n→ Industry-Collection Map]
+    end
+
+    style SUBAGENTS fill:#f4f6f9,stroke:#d0d5dd
 ```
 
-### Agentforce Side
+---
 
-The tool runs as one of three specialized subagents in the Agentforce architecture:
+## Boomi Process — Shape by Shape
 
-- **Salesforce Account Integration** — this tool (account lookups)
-- **Automated Asset Surfacing** — DAM content retrieval
-- **Content Relevance Matching** — industry-to-collection mapping
-
-Each subagent owns exactly one action, with mutually exclusive classification descriptions so Agentforce's Atlas reasoning engine routes cleanly without ambiguity.
+| Shape | Type | What It Does |
+|---|---|---|
+| **WSS Listener** | Start | Receives POST from Agentforce; exposes the `/executeAprimo_SF_AccountLookup` endpoint |
+| **Groovy Parser** | Data Process | Reads `accountName`, `industry`, `type`, `billingCountry` from JSON body; builds dynamic SOQL WHERE clause with `%` wildcard fuzzy matching; uses `ExecutionUtil.setDynamicProcessProperty()` (not `props.setProperty()` — see Gotchas) |
+| **Salesforce Query** | Connector | OAuth-authenticated SOQL against the Account object; returns 30+ fields |
+| **Data Mapper** | Map | Transforms Salesforce XML response into clean JSON; maps to `transform.map_Salesforce_Accounts_XML_to_JSON` and `RRojas_ResponseTransformMap` |
+| **Response Handler** | Return | Sends structured JSON payload back to Agentforce agent |
 
 ---
 
@@ -133,6 +149,15 @@ Basic Auth using the `Salesforce-aprimo-master` credential configured in Boomi S
 ```
 
 All fields except `accountName` are optional filters. Omit them to broaden the search.
+
+### Supported Query Filters
+
+| Field | SOQL Behavior |
+|---|---|
+| `accountName` | `LIKE '%value%'` — fuzzy name match |
+| `industry` | `LIKE '%value%'` — partial industry match |
+| `type` | `LIKE '%value%'` — partial type match |
+| `billingCountry` | `LIKE '%value%'` — partial country match |
 
 ### Response
 
@@ -197,16 +222,7 @@ When Salesforce records are incomplete, the integration supports enrichment bran
 | Listener Type | Web Services Server (WSS) |
 | Atom Tier | Intermediate or Basic (not Advanced — see Gotchas) |
 | Auth Type | Basic Auth |
-| Salesforce Connection | OAuth via Named Credential |
-
-### Supported Query Filters
-
-| Filter Field | SOQL Behavior |
-|---|---|
-| `accountName` | LIKE with % wildcard (case-insensitive fuzzy match) |
-| `industry` | LIKE with % wildcard |
-| `type` | LIKE with % wildcard |
-| `billingCountry` | LIKE with % wildcard |
+| Salesforce Connection | OAuth via Named Credential (`connector-settings_Salesforce Connection.json`) |
 
 ---
 
@@ -233,7 +249,7 @@ Every deployment must follow this exact order. Skipping any step leaves the old 
 5. TEST
    POST a sample payload to the endpoint
    Confirm account data returns in response body
-   Check Boomi Process Reporting to verify the SOQL built correctly
+   Check Boomi Process Reporting to verify SOQL built correctly
 ```
 
 ---
@@ -241,9 +257,9 @@ Every deployment must follow this exact order. Skipping any step leaves the old 
 ## Agentforce Setup
 
 1. In **Salesforce Setup → Agent Actions**, create a new External Service action pointing to the Boomi endpoint
-2. Define input variable: `accountName` (Text, required)
+2. Define input variable: `accountName` (Text, required) — see `agentforce/tool-definitions/account-lookup-tool-definition.json`
 3. Define output: structured JSON (the agent receives this and incorporates it into its response)
-4. In **Agentforce Builder**, add the action to the `Salesforce Account Integration` subagent only
+4. In **Agentforce Builder**, add the action to the `Salesforce Account Integration` subagent **only**
 5. Write a classification description that makes this subagent the exclusive owner of account lookup requests
 6. **Save → Commit → Activate** (all three steps — Save alone does not deploy)
 
@@ -256,46 +272,46 @@ Every deployment must follow this exact order. Skipping any step leaves the old 
 These are hard-won discoveries from the production build — none of them are in the official documentation.
 
 ### 1. ExecutionUtil vs. props for Dynamic Process Properties
-**Problem:** Setting document-scoped dynamic properties using `props.setProperty()` silently fails with no error.
-**Fix:** Always use `ExecutionUtil.setDynamicProcessProperty()` for the `document.dynamic.userdefined.*` scope. The process appears to run successfully, which is what makes this so hard to find.
+**Problem:** Setting document-scoped dynamic properties using `props.setProperty()` silently fails with no error — the process reports success, but values are never set.
+**Fix:** Always use `ExecutionUtil.setDynamicProcessProperty()` for the `document.dynamic.userdefined.*` scope.
 
 ### 2. The Atom Tier Requirement
 **Problem:** Advanced tier atoms do not support the WSS Listener pattern used here.
 **Fix:** This process must deploy to an Intermediate or Basic tier atom. Advanced atoms require the API Service wrapper pattern — a fundamentally different architecture.
 
 ### 3. SOQL Wildcard Bug (Agent API Tool vs. Direct POST)
-**Problem:** When called via Boomi Agent Control Tower's API tool, `accountName` was passed as `%` (a wildcard) instead of the actual company name, causing the SOQL to return all accounts. When called via direct POST, it worked correctly.
+**Problem:** When called via Boomi Agent Control Tower's API tool, `accountName` arrived as `%` (a bare wildcard) instead of the actual company name, causing the SOQL to return all accounts. When called via direct POST, it worked correctly.
 **Root cause:** The Boomi Agent API tool sends parameters in a different payload structure than a direct POST. The Groovy parser was reading from the wrong JSON path.
-**Fix:** Inspect the exact payload in Boomi Process Reporting shape execution logs, and update the Groovy extraction logic to match the Agent tool's body format.
+**Fix:** Inspect the exact payload in Boomi Process Reporting → shape execution log, and update the Groovy extraction to match the Agent tool's actual body format.
 
 ### 4. Agentforce Permission Failures
 **Problem:** The agent could invoke the action but received permission errors on execution.
-**Root cause:** The Einstein Agent User was not a member of the `AgentforceServiceAgentUserPsg` permission set group. Admin debug context and live agent execution context are separate security surfaces — something that works when you test as an admin may silently fail when the agent runs it.
-**Fix:** Add the Einstein Agent User to the `AgentforceServiceAgentUserPsg` group, and validate in live agent context, not admin context.
+**Root cause:** The Einstein Agent User was not a member of the `AgentforceServiceAgentUserPsg` permission set group. Admin debug context and live agent execution context are separate security surfaces — something that works when you test as an admin can silently fail when the agent runs it in production.
+**Fix:** Add the Einstein Agent User to `AgentforceServiceAgentUserPsg` explicitly, and validate in live agent context, not admin context.
 
 ### 5. Agentforce Action Output Cannot Be Modified Post-Creation
 **Problem:** Once an agent action's output definition is saved in Agentforce, it cannot be edited.
-**Fix:** Delete and recreate the action from scratch if the output schema needs to change. Plan your output structure carefully before creating the action.
+**Fix:** Delete and recreate the action from scratch if the output schema needs to change. Plan your output structure before creating the action.
 
 ### 6. One Action Per Subagent
-**Problem:** Assigning multiple actions to a single subagent caused Agentforce's routing to behave unpredictably — actions intended for one subagent contaminated another.
-**Fix:** Each subagent owns exactly one action. Classification descriptions must be mutually exclusive, written to clearly fence each subagent's domain.
+**Problem:** Assigning multiple actions to a single subagent caused Agentforce's routing to break — actions intended for one subagent contaminated another.
+**Fix:** Each subagent owns exactly one action. Classification descriptions must be mutually exclusive.
 
 ---
 
 ## Troubleshooting
 
 **The endpoint returns no accounts**
-Check Boomi Process Reporting for the execution. View the Groovy shape's document log to see the exact SOQL that was built. Confirm the `accountName` field was extracted correctly — not being passed as a `%` wildcard (see Gotcha #3).
+Check Boomi Process Reporting. View the Groovy shape's document log to see the exact SOQL built. Confirm `accountName` was extracted correctly and not arriving as a `%` wildcard (see Gotcha #3).
 
 **The listener isn't responding**
-Confirm the process is deployed to the correct atom (not an Advanced tier). Go to Manage → Atom Management → Listeners and confirm the process appears as Active. If not, restart all listeners and redeploy.
+Confirm the process is deployed to the correct atom tier (not Advanced). Go to Manage → Atom Management → Listeners and confirm the process is Active. If not, restart all listeners and redeploy.
 
 **Permission errors in Agentforce**
-Do not test only in admin context. Run a live conversation in the Agentforce preview panel using the actual agent persona. Check that the Einstein Agent User has the `AgentforceServiceAgentUserPsg` group membership (see Gotcha #4).
+Do not test only in admin context. Run a live conversation using the actual agent persona. Check that the Einstein Agent User has `AgentforceServiceAgentUserPsg` group membership (see Gotcha #4).
 
 **Agent isn't routing to this subagent**
-Review the classification description on the `Salesforce Account Integration` subagent. It must unambiguously describe the account lookup use case and not overlap in wording with the other two subagents. The Atlas reasoning engine routes based on intent matching against classification descriptions.
+Review the classification description on `Salesforce Account Integration`. It must unambiguously describe account lookup intent and not overlap in wording with the other two subagents. The Atlas reasoning engine routes based on intent matching against these descriptions.
 
 ---
 
@@ -303,15 +319,26 @@ Review the classification description on the `Salesforce Account Integration` su
 
 ```
 /
-├── README.md                              <- You are here
-├── docs/
-│   ├── FINAL_CONFIG.md                   <- Credentials and endpoint details
-│   └── LESSONS_LEARNED.md                <- Extended technical discovery log
-├── boomi/
-│   └── processes/
-│       └── Aprimo_SF_AccountLookup.xml   <- Boomi process definition (exportable)
-└── agentforce/
-    └── tool-definitions/                 <- Agentforce agent tool configuration files
+├── README.md                                    # Main documentation with flow diagram
+├── agentforce/
+│   ├── README.md                               # Agentforce quick reference
+│   └── tool-definitions/
+│       └── account-lookup-tool-definition.json # Full tool schema for Agentforce
+└── boomi/
+    ├── connectors/
+    │   ├── connector-action_Aprimo_SF_AccountLookup_Listener.json
+    │   ├── connector-action_Aprimo_SF_AccountLookup_Operation.json
+    │   └── connector-settings_Salesforce Connection.json
+    ├── processes/
+    │   └── process_Aprimo_SF_AccountLookup.json
+    ├── profiles/
+    │   ├── profile.json_Salesforce_Account_Query_Request_Profile.json
+    │   └── profile.json_Salesforce_Account_Response_Profile.json
+    └── maps/
+        ├── transform.map_RRojas_RequestToFiltersMap.json
+        ├── transform.map_RRojas_ResponseTransformMap.json
+        ├── transform.map_Salesforce_QueryRequest_to_Account_Filters.json
+        └── transform.map_Salesforce_Accounts_XML_to_JSON.json
 ```
 
 ---
