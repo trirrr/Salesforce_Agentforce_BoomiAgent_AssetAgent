@@ -1,4 +1,4 @@
-# Aprimo SF Account Lookup for Agentforce
+# Aprimo SalesForce Account Lookup for Agentforce
 
 An agentic tool that enables Agentforce agents to autonomously query Salesforce account data during conversations.
 
